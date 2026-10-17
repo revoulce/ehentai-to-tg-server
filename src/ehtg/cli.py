@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import signal
+import time
 from pathlib import Path
 
 from ehtg.analysis import AnalysisQueue
@@ -157,8 +158,12 @@ async def _workers(
     publisher = (
         PublicationWorker(service, settings, source, telegram) if telegram is not None else None
     )
+    next_cleanup = 0.0
     try:
         while True:
+            if publisher is not None and time.monotonic() >= next_cleanup:
+                await asyncio.to_thread(publisher.artifacts.cleanup)
+                next_cleanup = time.monotonic() + 3600
             did_work = await asyncio.to_thread(analysis.run_once)
             if publisher is not None:
                 did_work = await publisher.run_once() or did_work

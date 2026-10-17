@@ -146,3 +146,40 @@ def test_crash_with_sending_part_requires_review(service: GalleryService, tmp_pa
     assert not asyncio.run(worker.run_once())
     assert service.get_job(job_id)["error_code"] == "DELIVERY_UNCERTAIN"
     assert telegram.parts == []
+
+
+def test_animation_exclusion_and_cancel_preserve_history(
+    service: GalleryService, tmp_path: Path
+) -> None:
+    job_id, worker, telegram, _ = fixture(service, tmp_path, 2)
+    worker.state(job_id, "needs_review", error=AppError("ANIMATION_REVIEW", "review"), page=2)
+    job = service.get_job(job_id)
+    updated = JobControl(service).review(job_id, job["revision"], "exclude", page=2)
+    assert [p["source_page_index"] for p in updated["pages"]] == [1]
+    assert updated["plan"]["parts"][0]["pages"] == [1]
+    JobControl(service).action(job_id, updated["revision"], "cancel")
+    assert not asyncio.run(worker.run_once())
+    assert telegram.parts == []
+
+
+def test_explicit_reposts_cannot_create_two_active_jobs(
+    service: GalleryService, tmp_path: Path
+) -> None:
+    job_id, worker, _, _ = fixture(service, tmp_path, 1)
+    asyncio.run(worker.run_once())
+    a, b = service.repost(job_id), service.repost(job_id)
+    for draft in (a, b):
+        service.record_analysis(draft["id"], 1, GallerySnapshot("Fixture", ("0",)))
+    service.publish(a["id"], 2, "repost-a")
+    with pytest.raises(AppError) as error:
+        service.publish(b["id"], 2, "repost-b")
+    assert error.value.code == "ALREADY_QUEUED"
+
+
+def test_missing_frozen_plan_never_sends(service: GalleryService, tmp_path: Path) -> None:
+    job_id, worker, telegram, _ = fixture(service, tmp_path, 1)
+    with service.db.transaction() as connection:
+        connection.execute("UPDATE jobs SET plan_json='{}' WHERE id=?", (job_id,))
+    asyncio.run(worker.run_once())
+    assert service.get_job(job_id)["state"] == "needs_review"
+    assert telegram.parts == []

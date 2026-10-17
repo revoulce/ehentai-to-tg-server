@@ -9,9 +9,10 @@ from typing import Any
 from uuid import UUID
 
 from ehtg.analysis import AnalysisQueue
+from ehtg.artifacts import ArtifactStore
 from ehtg.auth import DeviceAuth
 from ehtg.domain.errors import AppError
-from ehtg.domain.publication import PublicationOptions
+from ehtg.domain.publication import PublicationOptions, page_ranges
 from ehtg.domain.selection import PageSelection
 from ehtg.publisher import JobControl
 from ehtg.service import GalleryService
@@ -34,6 +35,7 @@ HELP = (
     "/review JOB REV sent ссылка — уже отправлено\n"
     "/review JOB REV not_sent — не отправлено, разрешить повтор\n"
     "/frame JOB REV PAGE — использовать первый кадр\n"
+    "/preview JOB PAGE — показать подготовленную страницу/первый кадр\n"
     "/exclude JOB REV PAGE — исключить анимацию\n"
     "/repost JOB — новый черновик для явного повтора\n"
     "/analysis_retry ID REV /analysis_cancel ID REV\n"
@@ -261,6 +263,19 @@ class OwnerBot:
         elif name == "/repost":
             draft = self.service.repost(str(UUID(args[0])))
             self.draft_card(draft["id"], key)
+        elif name == "/preview":
+            job_id, page = str(UUID(args[0])), int(args[1])
+            job = self.service.get_job(job_id)
+            if page not in [p["source_page_index"] for p in job["pages"]]:
+                raise AppError("NOT_FOUND", "Страница не найдена.", 404)
+            if not ArtifactStore(self.settings, self.db).path(job_id, page, "photo").is_file():
+                raise AppError("NOT_FOUND", "Предпросмотр ещё не подготовлен.", 404)
+            self.enqueue(
+                key,
+                f"Предпросмотр страницы {page}",
+                method="previewPhoto",
+                extra={"job_id": job_id, "page": page},
+            )
         elif name in {"/analysis_retry", "/analysis_cancel"}:
             draft_id, rev = str(UUID(args[0])), int(args[1])
             if name == "/analysis_retry":
@@ -323,8 +338,10 @@ class OwnerBot:
             self.enqueue(key, "Неизвестная команда. /help")
 
     def job_text(self, job: dict[str, Any]) -> str:
+        parts = job["plan"].get("parts", [])
+        title = parts[0]["caption"].split("\n", 1)[0] if parts else ""
         text = (
-            f"{job['id']}\n{job['state']} · ревизия {job['revision']}\n"
+            f"{title}\n{job['id']}\n{job['state']} · ревизия {job['revision']}\n"
             f"Страниц: {job['published_pages']}/{len(job['pages'])}; "
             f"частей: {job['published_parts']}/{len(job['plan'].get('parts', []))}"
         )
@@ -339,6 +356,8 @@ class OwnerBot:
         for part in job["parts"]:
             if part["state"] == "sending":
                 text += f"\nСверьте часть {part['part_index']}, попытка {part['attempted_at']}."
+                pages = parts[part["part_index"] - 1]["pages"]
+                text += f" Страницы {page_ranges(pages)}."
             if part["result"]:
                 text += "\n" + part["result"][0].get("link", "")
         return text
@@ -362,6 +381,20 @@ class OwnerBot:
                     f"job:{job['id']}:{job['state']}:{job['error_code']}",
                     self.job_text(self.service.get_job(job["id"])),
                 )
+            pauses = connection.execute(
+                "SELECT e.sequence,e.object_id FROM events e JOIN draft_analysis a "
+                "ON a.draft_id=e.object_id WHERE e.kind='analysis_paused' AND a.state='paused' "
+                "AND e.sequence=(SELECT MAX(sequence) FROM events WHERE object_id=e.object_id "
+                "AND kind='analysis_paused')"
+            ).fetchall()
+            for pause in pauses:
+                draft = self.service.get_draft(pause["object_id"])
+                reason = draft["analysis"]["error_code"] or "проверьте /source_status"
+                self.enqueue(
+                    f"analysis-pause:{pause['sequence']}",
+                    f"Источник приостановлен: {reason}. "
+                    "После проверки сессии администратор выполняет ehtg source resume.",
+                )
 
     async def flush_one(self) -> bool:
         with self.db.transaction() as connection:
@@ -377,7 +410,22 @@ class OwnerBot:
             )
         payload = json.loads(row["payload_json"])
         try:
-            await self.client.call(payload["method"], payload["data"], sending=True)
+            if payload["method"] == "previewPhoto":
+                data = payload["data"]
+                path = ArtifactStore(self.settings, self.db).path(
+                    data["job_id"], data["page"], "photo"
+                )
+                if not path.is_file():
+                    raise AppError("NOT_FOUND", "Предпросмотр уже удалён.", 404)
+                with path.open("rb") as handle:
+                    await self.client.call(
+                        "sendPhoto",
+                        {"chat_id": self.settings.owner_id, "caption": data["text"]},
+                        files={"photo": ("preview.jpg", handle, "image/jpeg")},
+                        sending=True,
+                    )
+            else:
+                await self.client.call(payload["method"], payload["data"], sending=True)
         except AppError as error:
             safe_retry = error.retryable and row["attempts"] < 5
             with self.db.transaction() as connection:

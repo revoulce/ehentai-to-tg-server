@@ -1,5 +1,7 @@
+import hashlib
 from collections.abc import Callable
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from ehtg.domain.snapshot import GallerySnapshot
@@ -15,6 +17,7 @@ class GalleryDLSource:
         self.settings = settings
         self.sessions = SessionStore(settings.source_session_path)
         self.process = process or IsolatedProcess(timeout=settings.analysis_timeout)
+        self.media_process = process or IsolatedProcess(timeout=settings.media_timeout)
 
     def probe(self) -> dict[str, Any]:
         return dict(
@@ -53,6 +56,45 @@ class GalleryDLSource:
                 snapshot[field] = tuple(
                     tuple(tag) if isinstance(tag, list) else tag for tag in snapshot[field]
                 )
-            return GallerySnapshot(**snapshot)
+            result_snapshot = GallerySnapshot(**snapshot)
+            self._cache_cover(result_snapshot, heartbeat)
+            return result_snapshot
         except (KeyError, TypeError, ValueError):
             raise SourceError("EXTRACTOR_INCOMPATIBLE") from None
+
+    def cover_path(self, url: str) -> Path:
+        directory = self.settings.files_path.resolve() / "covers"
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if directory.is_symlink():
+            raise SourceError("SOURCE_NETWORK_POLICY")
+        return directory / (hashlib.sha256(url.encode()).hexdigest() + ".jpg")
+
+    def _cache_cover(self, snapshot: GallerySnapshot, heartbeat: Callable[[], None]) -> None:
+        if not snapshot.cover_url:
+            return
+        path = self.cover_path(snapshot.cover_url)
+        if path.is_file() and not path.is_symlink():
+            return
+        try:
+            self.media_process.run(
+                {
+                    "operation": "cover",
+                    "url": snapshot.cover_url,
+                    "destination": str(path),
+                    "database_path": str(self.settings.database_path.resolve()),
+                    "interval": self.settings.media_request_interval,
+                    "request_timeout": self.settings.source_request_timeout,
+                    "min_free_bytes": self.settings.min_free_bytes,
+                    "memory_mb": self.settings.source_memory_mb,
+                },
+                heartbeat,
+            )
+        except SourceError as error:
+            if error.code in {
+                "SOURCE_AUTH_REQUIRED",
+                "SOURCE_QUOTA_EXCEEDED",
+                "SOURCE_TEMPORARILY_BLOCKED",
+            }:
+                raise
+            # An unavailable thumbnail never changes the analyzed page identities.
+            return

@@ -37,7 +37,7 @@ class JobControl:
                 sending = connection.execute(
                     "SELECT 1 FROM publication_parts WHERE job_id=? AND state='sending'", (job_id,)
                 ).fetchone()
-                if sending:
+                if sending and row["state"] != "needs_review":
                     connection.execute(
                         "UPDATE jobs SET cancel_requested=1,revision=revision+1 WHERE id=?",
                         (job_id,),
@@ -53,8 +53,23 @@ class JobControl:
                     "SOURCE_VERSION_CHANGED",
                     "DELIVERY_UNCERTAIN",
                     "ANIMATION_REVIEW",
+                    "PUBLICATION_RECONFIRM_REQUIRED",
                 }:
                     raise AppError("REVIEW_REQUIRED", "Сначала разрешите причину остановки.", 409)
+                conflict = connection.execute(
+                    "SELECT 1 FROM jobs WHERE id<>? AND owner_id=? AND gid=? AND channel_id=? "
+                    "AND (state NOT IN ('completed','failed','cancelled') OR "
+                    "(? IS NULL AND (state='completed' OR published_pages>0))) LIMIT 1",
+                    (
+                        job_id,
+                        self.service.owner_id,
+                        row["gid"],
+                        row["channel_id"],
+                        row["repost_of"],
+                    ),
+                ).fetchone()
+                if conflict:
+                    raise AppError("ALREADY_QUEUED", "Другое задание галереи уже принято.", 409)
                 connection.execute(
                     "UPDATE jobs SET state='queued',attempts=0,retry_at=NULL,"
                     "error_code=NULL,error_message=NULL,revision=revision+1 "
@@ -282,6 +297,7 @@ class PublicationWorker:
                     "DELIVERY_UNCERTAIN",
                     "SOURCE_VERSION_CHANGED",
                     "ANIMATION_REVIEW",
+                    "PUBLICATION_RECONFIRM_REQUIRED",
                 }:
                     state = "needs_review"
                 elif error.retryable and job["attempts"] < self.settings.job_max_attempts:
@@ -319,6 +335,12 @@ class PublicationWorker:
 
     async def _execute(self, job_id: str) -> None:
         job = self.service.get_job(job_id)
+        if not job["plan"].get("parts"):
+            raise AppError(
+                "PUBLICATION_RECONFIRM_REQUIRED",
+                "Создайте новый черновик и подтвердите серверную подпись.",
+                409,
+            )
         if job["published_pages"] == len(job["pages"]):
             with self.db.transaction() as connection:
                 connection.execute(

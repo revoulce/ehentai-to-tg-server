@@ -92,13 +92,14 @@ class ArtifactStore:
                 ).fetchone()[0]
             if used + self.settings.media_max_bytes + 9_500_000 > self.settings.job_max_bytes:
                 raise AppError("RESOURCE_LIMIT", "Достигнут предел файлов задания.")
-            source.process.run(
+            source.media_process.run(
                 {
                     "operation": "download",
                     "page_url": identity,
                     "destination": str(original),
                     "max_media_bytes": self.settings.media_max_bytes,
                     "min_free_bytes": self.settings.min_free_bytes,
+                    "media_interval": self.settings.media_request_interval,
                     **source._payload(source.sessions.load()),
                 },
                 heartbeat,
@@ -150,4 +151,10 @@ class ArtifactStore:
             if folder.is_dir() and not folder.is_symlink() and folder.resolve().parent == self.root:
                 shutil.rmtree(folder)
                 removed += 1
+        covers = self.root / "covers"
+        if covers.is_dir() and not covers.is_symlink():
+            cutoff = time.time() - self.settings.file_retention_seconds
+            for path in covers.glob("*.jpg"):
+                if not path.is_symlink() and path.stat().st_mtime <= cutoff:
+                    path.unlink(missing_ok=True)
         return removed

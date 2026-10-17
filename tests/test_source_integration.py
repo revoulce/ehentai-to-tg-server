@@ -94,6 +94,7 @@ def test_session_protocol_parser_worker_and_confirmation_together(
         source_session_path=tmp_path / "secrets" / "session.json",
     )
     adapter = GalleryDLSource(settings, process=FixtureProcess())
+    monkeypatch.setattr(adapter, "_cache_cover", lambda *args: None)
     cookie_path = tmp_path / "cookies.txt"
     cookie_path.write_text(
         "# Netscape HTTP Cookie File\n"

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     job_max_bytes: int = Field(default=1_000_000_000, ge=1000000, le=10_000_000_000)
     min_free_bytes: int = Field(default=500_000_000, ge=0)
     media_timeout: float = Field(default=120, ge=10, le=600)
+    media_request_interval: float = Field(default=1, ge=1, le=60)
     job_max_attempts: int = Field(default=5, ge=1, le=20)
     file_retention_seconds: int = Field(default=86400, ge=0)
     source_session_path: Path = Path("secrets/source-session.json")

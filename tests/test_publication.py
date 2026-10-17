@@ -72,3 +72,18 @@ def test_options_are_frozen_in_confirmed_job(service: GalleryService) -> None:
     job = service.get_job(service.publish(draft["id"], edited["revision"], "key")["job_id"])
     assert job["plan"] == edited["preview"]
     assert job["plan"]["options"]["has_spoiler"] is True
+
+
+def test_prototype_jobs_require_new_caption_confirmation(service: GalleryService) -> None:
+    draft = service.create_draft(URL, PageSelection())
+    service.record_analysis(draft["id"], 1, GallerySnapshot("Legacy", ("one",)))
+    job_id = service.publish(draft["id"], 2, "legacy")["job_id"]
+    with service.db.transaction() as connection:
+        connection.execute("UPDATE jobs SET plan_json='{}' WHERE id=?", (job_id,))
+        connection.execute("DELETE FROM schema_migrations WHERE name='007_legacy_confirmation.sql'")
+    service.db.initialize()
+    job = service.get_job(job_id)
+    assert job["state"] == "needs_review"
+    assert job["error_code"] == "PUBLICATION_RECONFIRM_REQUIRED"
+    service.db.initialize()
+    assert service.get_job(job_id)["revision"] == job["revision"]

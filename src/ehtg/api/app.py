@@ -23,6 +23,7 @@ from ehtg.api.responses import (
     ErrorResponse,
     JobList,
     JobResponse,
+    JobState,
     PairingResponse,
     PublicationReceipt,
 )
@@ -44,6 +45,7 @@ from ehtg.domain.selection import PageSelection
 from ehtg.publisher import JobControl
 from ehtg.service import GalleryService
 from ehtg.settings import Settings
+from ehtg.source.adapter import GalleryDLSource
 from ehtg.source.session import SessionStore
 from ehtg.storage.database import Database
 
@@ -197,10 +199,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "publication_worker": True,
                 "batch": True,
                 "caption_preview": True,
+                "cover_preview": True,
                 "image_url_resolution": True,
             },
             "limits": {
                 "max_pages": config.max_pages,
+                "max_batch": 50,
+                "max_media_bytes": config.media_max_bytes,
+                "max_media_pixels": config.media_max_pixels,
+                "max_job_bytes": config.job_max_bytes,
+                "min_free_bytes": config.min_free_bytes,
                 "max_queue": config.max_queue,
                 "max_body_bytes": config.max_body_bytes,
                 "max_source_html_bytes": config.source_max_html_bytes,
@@ -253,6 +261,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["ETag"] = f'"{result["revision"]}"'
         return result
 
+    @api.get("/drafts/{draft_id}/cover")
+    def draft_cover(draft_id: UUID) -> FileResponse:
+        draft = service.get_draft(str(draft_id))
+        snapshot = draft["snapshot"]
+        if snapshot is None or not snapshot["cover_url"]:
+            raise AppError("NOT_FOUND", "Обложка недоступна.", 404)
+        path = GalleryDLSource(config).cover_path(snapshot["cover_url"])
+        if not path.is_file() or path.is_symlink():
+            raise AppError("NOT_FOUND", "Обложка не была загружена анализатором.", 404)
+        return FileResponse(
+            path,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
+
     @api.patch("/drafts/{draft_id}", response_model=DraftResponse)
     def edit_draft(
         draft_id: UUID,
@@ -295,9 +318,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @api.get("/jobs", response_model=JobList)
     def jobs(
-        after: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=100)] = 50
+        after: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        state: JobState | None = None,
     ) -> dict[str, Any]:
-        return service.list_jobs(after=after, limit=limit)
+        return service.list_jobs(after=after, limit=limit, state=state)
 
     @api.get("/jobs/{job_id}", response_model=JobResponse)
     def get_job(job_id: UUID, response: Response) -> dict[str, Any]:

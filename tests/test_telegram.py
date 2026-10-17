@@ -84,3 +84,21 @@ def test_multipart_upload_and_photo_flags(tmp_path: Path) -> None:
         await client.close()
 
     asyncio.run(run())
+
+
+def test_http_client_logs_redact_token(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    async def run() -> None:
+        client = TelegramClient(
+            TOKEN,
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(200, json={"ok": True, "result": {"id": 123}})
+            ),
+        )
+        with caplog.at_level(logging.INFO, logger="httpx"):
+            await client.call("getMe")
+        assert TOKEN not in caplog.text and "[redacted]" in caplog.text
+        await client.close()
+
+    asyncio.run(run())

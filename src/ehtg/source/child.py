@@ -42,6 +42,8 @@ def _limits(request: dict[str, Any]) -> None:
         resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
         resource.setrlimit(resource.RLIMIT_CPU, (120, 120))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        file_limit = max(10_000_000, int(request.get("max_media_bytes", 10_000_000)))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (file_limit, file_limit))
 
 
 def main() -> None:
@@ -54,6 +56,24 @@ def main() -> None:
         operation = request["operation"]
         if operation == "probe":
             result: dict[str, Any] = {"probe": probe()}
+        elif operation == "cover":
+            from ehtg.media import prepare
+            from ehtg.source.media_transport import download
+
+            destination = Path(request["destination"])
+            original = destination.with_suffix(".source")
+            try:
+                download(
+                    request["url"],
+                    original,
+                    SourceGate(Database(Path(request["database_path"])), request["interval"]),
+                    max_bytes=2_000_000,
+                    timeout=request["request_timeout"],
+                    min_free_bytes=request["min_free_bytes"],
+                )
+                result = prepare(original, destination, max_pixels=4_000_000, first_frame=True)
+            finally:
+                original.unlink(missing_ok=True)
         elif operation == "prepare":
             from ehtg.media import prepare
 
@@ -93,7 +113,10 @@ def main() -> None:
                         download(
                             page.url,
                             Path(request["destination"]),
-                            gate,
+                            SourceGate(
+                                Database(Path(request["database_path"])),
+                                request.get("media_interval", request["interval"]),
+                            ),
                             max_bytes=request["max_media_bytes"],
                             timeout=request["request_timeout"],
                             min_free_bytes=request["min_free_bytes"],

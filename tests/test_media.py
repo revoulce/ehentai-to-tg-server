@@ -59,7 +59,7 @@ def test_bad_images_and_extreme_geometry(tmp_path: Path) -> None:
         prepare(source, photo)
     Image.new("RGB", (50, 5000), "red").save(source, format="PNG")
     result = prepare(source, photo)
-    assert result["photo"]["height"] / result["photo"]["width"] <= 20.1
+    assert result["photo"]["height"] / result["photo"]["width"] <= 20
     assert "aspect_padding" in result["photo"]["transforms"]
 
 

@@ -140,6 +140,13 @@ class GalleryService:
             ).fetchone()
             if duplicate:
                 result["duplicate"] = dict(duplicate)
+                part = connection.execute(
+                    "SELECT result_json FROM publication_parts WHERE job_id=? AND state='sent' "
+                    "ORDER BY part_index LIMIT 1",
+                    (duplicate["id"],),
+                ).fetchone()
+                messages = json.loads(part["result_json"] or "[]") if part else []
+                result["duplicate"]["link"] = messages[0].get("link") if messages else None
             return result
 
     def record_analysis(
@@ -316,6 +323,15 @@ class GalleryService:
             result = dict(row)
             result["page_selection"] = json.loads(result.pop("selection_json"))
             result["plan"] = json.loads(result.pop("plan_json"))
+            snapshot = connection.execute(
+                "SELECT source_url,metadata_json FROM gallery_snapshots WHERE id=?",
+                (result["snapshot_id"],),
+            ).fetchone()
+            result["source_url"] = snapshot["source_url"]
+            result["title"] = (
+                result["plan"].get("options", {}).get("title")
+                or json.loads(snapshot["metadata_json"])["title"]
+            )
             result["review"] = json.loads(result.pop("review_json"))
             result["parts"] = [
                 {**dict(part), "result": json.loads(part["result_json"] or "null")}
@@ -333,14 +349,23 @@ class GalleryService:
             ]
             return result
 
-    def list_jobs(self, *, after: int = 0, limit: int = 50) -> dict[str, Any]:
+    def list_jobs(
+        self, *, after: int = 0, limit: int = 50, state: str | None = None
+    ) -> dict[str, Any]:
         with self.db.read() as connection:
             rows = connection.execute(
-                "SELECT sequence,id,state,created_at,published_pages,published_parts "
-                "FROM jobs WHERE owner_id=? AND sequence>? ORDER BY sequence LIMIT ?",
-                (self.owner_id, after, limit + 1),
+                "SELECT j.*,s.metadata_json,(SELECT COUNT(*) FROM job_pages p WHERE p.job_id=j.id) "
+                "AS selected_pages FROM jobs j JOIN gallery_snapshots s ON s.id=j.snapshot_id "
+                "WHERE j.owner_id=? AND j.sequence>? AND (? IS NULL OR j.state=?) "
+                "ORDER BY j.sequence LIMIT ?",
+                (self.owner_id, after, state, state, limit + 1),
             ).fetchall()
             items = [dict(row) for row in rows[:limit]]
+            for item in items:
+                metadata = json.loads(item.pop("metadata_json"))
+                plan = json.loads(item.pop("plan_json"))
+                item["title"] = plan.get("options", {}).get("title") or metadata["title"]
+                item["total_parts"] = len(plan.get("parts", []))
             return {
                 "items": items,
                 "next_cursor": items[-1]["sequence"] if len(rows) > limit else None,
@@ -350,7 +375,7 @@ class GalleryService:
         if not 1 <= len(urls) <= 50:
             raise AppError("RESOURCE_LIMIT", "Выберите от 1 до 50 галерей.")
         canonical = [parse_source_url(url).canonical for url in urls]
-        if len(set(canonical)) != len(canonical):
+        if len({parse_source_url(url).gid for url in canonical}) != len(canonical):
             raise AppError("INVALID_BATCH", "В списке повторяются галереи.")
         batch_id = str(uuid4())
         with self.db.transaction() as connection:

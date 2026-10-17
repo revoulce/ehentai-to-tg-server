@@ -97,10 +97,13 @@ class JobResponse(BaseModel):
     review: dict[str, Any]
     parts: list[dict[str, Any]]
     attempts: int
-    retry_at: float | None
+    retry_at: datetime | None
     error_code: str | None
     error_message: str | None
-    completed_at: float | None
+    completed_at: datetime | None
+    cancel_requested: bool
+    title: str
+    source_url: str
 
 
 class JobSummary(BaseModel):
@@ -110,6 +113,14 @@ class JobSummary(BaseModel):
     created_at: datetime
     published_pages: int
     published_parts: int
+    title: str
+    selected_pages: int
+    total_parts: int
+    revision: int
+    error_code: str | None
+    error_message: str | None
+    retry_at: datetime | None
+    cancel_requested: bool
 
 
 class JobList(BaseModel):

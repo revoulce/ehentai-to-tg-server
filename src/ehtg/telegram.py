@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from contextlib import ExitStack
 from pathlib import Path
@@ -7,6 +8,17 @@ from typing import Any
 import httpx
 
 from ehtg.domain.errors import AppError
+
+
+class SecretFilter(logging.Filter):
+    def __init__(self, secret: str) -> None:
+        super().__init__()
+        self.secret = secret
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = record.getMessage().replace(self.secret, "[redacted]")
+        record.args = ()
+        return True
 
 
 class TelegramError(AppError):
@@ -32,6 +44,16 @@ class TelegramClient:
         if re.fullmatch(r"[0-9]{1,20}:[A-Za-z0-9_-]{20,128}", token) is None:
             raise TelegramError("TELEGRAM_PERMISSION_DENIED")
         self._url = "https://api.telegram.org/bot" + token + "/"
+        self._filter = SecretFilter(token)
+        for name in (
+            "httpx",
+            "httpcore.connection",
+            "httpcore.http11",
+            "httpcore.http2",
+            "httpcore.proxy",
+            "httpcore.socks",
+        ):
+            logging.getLogger(name).addFilter(self._filter)
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(90, connect=15),
             trust_env=False,
@@ -41,6 +63,15 @@ class TelegramClient:
 
     async def close(self) -> None:
         await self._client.aclose()
+        for name in (
+            "httpx",
+            "httpcore.connection",
+            "httpcore.http11",
+            "httpcore.http2",
+            "httpcore.proxy",
+            "httpcore.socks",
+        ):
+            logging.getLogger(name).removeFilter(self._filter)
 
     async def call(
         self,
@@ -146,6 +177,13 @@ class TelegramClient:
                 messages = await self.call("sendMediaGroup", data, files=files, sending=True)
         try:
             if not isinstance(messages, list) or len(messages) != len(paths):
+                raise ValueError
+            if len({m["message_id"] for m in messages}) != len(messages):
+                raise ValueError
+            if len(paths) > 1 and (
+                not messages[0].get("media_group_id")
+                or any(m.get("media_group_id") != messages[0]["media_group_id"] for m in messages)
+            ):
                 raise ValueError
             normalized = []
             for message in messages:

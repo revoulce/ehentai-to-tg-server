@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ehentai-to-tg"
-version = "0.2.0"
+version = "0.3.0"
 description = "Persistent application core for a private gallery publishing service"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
