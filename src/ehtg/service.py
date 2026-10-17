@@ -12,6 +12,7 @@ from ehtg.domain.selection import PageSelection
 from ehtg.domain.snapshot import GallerySnapshot, canonical_json
 from ehtg.domain.source import parse_gallery_url
 from ehtg.storage.database import Database
+from ehtg.storage.snapshots import save_analysis
 
 
 def utc_now() -> str:
@@ -73,6 +74,7 @@ class GalleryService:
                     utc_now(),
                 ),
             )
+            connection.execute("INSERT INTO draft_analysis(draft_id) VALUES (?)", (draft_id,))
         return self.get_draft(draft_id)
 
     def get_draft(self, draft_id: str) -> dict[str, Any]:
@@ -82,6 +84,23 @@ class GalleryService:
             result["page_selection"] = json.loads(result.pop("selection_json"))
             result["snapshot"] = None
             result["selected_pages"] = []
+            analysis = connection.execute(
+                "SELECT state,attempts,retry_at,error_code,error_message,retryable "
+                "FROM draft_analysis WHERE draft_id=?",
+                (draft_id,),
+            ).fetchone()
+            result["analysis"] = (
+                dict(analysis)
+                if analysis is not None
+                else {
+                    "state": "succeeded",
+                    "attempts": 0,
+                    "retry_at": None,
+                    "error_code": None,
+                    "error_message": None,
+                    "retryable": False,
+                }
+            )
             if row["snapshot_id"]:
                 snapshot = connection.execute(
                     "SELECT * FROM gallery_snapshots WHERE id=?", (row["snapshot_id"],)
@@ -107,17 +126,14 @@ class GalleryService:
             self._revision(row, expected_revision)
             if row["state"] != "analyzing":
                 raise AppError("DRAFT_NOT_ANALYZING", "Анализ уже завершён.", 409)
-            PageSelection(**json.loads(row["selection_json"])).resolve(
-                len(snapshot.page_ids), max_pages=self.max_pages
-            )
-            snapshot_id = str(uuid4())
+            analysis = connection.execute(
+                "SELECT state,attempts FROM draft_analysis WHERE draft_id=?", (draft_id,)
+            ).fetchone()
+            if analysis is None or analysis["state"] != "pending" or analysis["attempts"] != 0:
+                raise AppError("ANALYSIS_LEASE_LOST", "Результат анализа устарел.", 409)
+            save_analysis(connection, row, snapshot, max_pages=self.max_pages, created_at=utc_now())
             connection.execute(
-                "INSERT INTO gallery_snapshots VALUES (?,?,?,?,?)",
-                (snapshot_id, row["source_url"], snapshot.fingerprint, snapshot.json, utc_now()),
-            )
-            connection.execute(
-                "UPDATE drafts SET state='ready', snapshot_id=?, revision=revision+1 WHERE id=?",
-                (snapshot_id, draft_id),
+                "UPDATE draft_analysis SET state='succeeded' WHERE draft_id=?", (draft_id,)
             )
 
     def edit_selection(
