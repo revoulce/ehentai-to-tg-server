@@ -140,3 +140,31 @@ def test_backup_restores_confirmed_queue(service: GalleryService, tmp_path: Path
     assert restored.publish(draft["id"], draft["revision"], "backup") == job
     with pytest.raises(ValueError):
         service.db.backup(target)
+
+
+def test_queue_limit_rejects_confirmation_without_partial_write(database: Database) -> None:
+    service = GalleryService(database, "123456", "-1001234567890", max_queue=1)
+    first = ready_draft(service, 1)
+    service.publish(first["id"], first["revision"], "first")
+    second = ready_draft(service, 2)
+    with pytest.raises(AppError) as error:
+        service.publish(second["id"], second["revision"], "queue-full")
+    assert error.value.code == "RESOURCE_LIMIT"
+    assert service.get_draft(second["id"])["state"] == "ready"
+    assert len(service.list_jobs()["items"]) == 1
+
+
+def test_changed_migration_is_rejected(database: Database) -> None:
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE schema_migrations SET checksum='changed' WHERE name='001_core.sql'"
+        )
+    with pytest.raises(RuntimeError, match="Applied migration changed"):
+        database.initialize()
+
+
+def test_newer_database_cannot_be_opened_by_older_application(database: Database) -> None:
+    with database.transaction() as connection:
+        connection.execute("INSERT INTO schema_migrations VALUES ('999_future.sql','future')")
+    with pytest.raises(RuntimeError, match="newer than this application"):
+        database.initialize()
