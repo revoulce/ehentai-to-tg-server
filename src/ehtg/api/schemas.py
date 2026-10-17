@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -43,6 +45,12 @@ class DraftRevision(StrictBody):
 
 class PublishBatch(StrictBody):
     items: list[DraftRevision] = Field(min_length=1, max_length=50)
+
+
+class ReviewJob(StrictBody):
+    decision: Literal["sent", "not_sent", "cancel", "first_frame", "exclude"]
+    evidence: str = Field(default="", max_length=2048)
+    page: int | None = Field(default=None, ge=1, le=2000)
 
 
 class PublishDraft(StrictBody):

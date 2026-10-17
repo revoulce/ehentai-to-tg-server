@@ -2,13 +2,14 @@ import json
 import os
 import signal
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from ehtg.domain.errors import AppError
+from ehtg.domain.source import GalleryURL, parse_source_url
 from ehtg.source.errors import SourceError
 from ehtg.source.parser import inspect_gallery, probe
 from ehtg.source.session import SessionCookie
@@ -74,6 +75,14 @@ def main() -> None:
                 allow_paused=operation == "verify",
             )
             verify_authenticated_home(transport.get("/home.php"))
+            canonical_url = ""
+            if operation == "inspect":
+                source = parse_source_url(request["source_url"])
+                if source.page is not None:
+                    canonical_url = GalleryURL(
+                        source.gid, transport.gallery_token(source.gid, source.token, source.page)
+                    ).canonical
+                    request["source_url"] = canonical_url
             if operation == "download":
                 from ehtg.source.media_transport import download
 
@@ -100,12 +109,15 @@ def main() -> None:
                     if operation == "verify"
                     else {
                         "snapshot": asdict(
-                            inspect_gallery(
-                                request["source_url"],
-                                transport.get,
-                                max_pages=request["max_pages"],
-                                max_index_pages=request["max_index_pages"],
-                            )
+                            replace(
+                                inspect_gallery(
+                                    request["source_url"],
+                                    transport.get,
+                                    max_pages=request["max_pages"],
+                                    max_index_pages=request["max_index_pages"],
+                                ),
+                                canonical_url=canonical_url,
+                            ),
                         )
                     }
                 )

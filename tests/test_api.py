@@ -202,4 +202,26 @@ def test_source_status_contains_no_session_values(client: TestClient) -> None:
     status = client.get("/api/v1/status").json()
     assert status["source"]["enabled"] is False
     assert status["source"]["session"]["state"] == "missing_or_expired"
-    assert status["worker"] == "analysis_only"
+    assert status["worker"] == "analysis_and_publication"
+
+
+def test_batch_contract_and_job_controls(client: TestClient) -> None:
+    batch = client.post("/api/v1/batches", json={"source_urls": [SOURCE]}).json()
+    draft = batch["items"][0]
+    client.app.state.service.record_analysis(draft["id"], 1, GallerySnapshot("Title", ("one",)))
+    preview = client.get(f"/api/v1/drafts/{draft['id']}").json()
+    assert preview["preview"]["parts"][0]["caption"].startswith("Title")
+    receipt = client.post(
+        f"/api/v1/batches/{batch['id']}/publish",
+        json={"items": [{"id": draft["id"], "revision": 2}]},
+        headers={"If-Match": '"1"', "Idempotency-Key": "batch-test"},
+    ).json()
+    job_id = receipt["items"][0]["job_id"]
+    assert client.post("/api/v1/queue/pause").json() == {"paused": True}
+    assert client.get("/api/v1/status").json()["queue_paused"] is True
+    job = client.get(f"/api/v1/jobs/{job_id}")
+    assert job.headers["etag"] == '"1"'
+    cancelled = client.post(f"/api/v1/jobs/{job_id}/cancel", headers={"If-Match": '"1"'})
+    assert cancelled.json()["state"] == "cancelled"
+    stale = client.post(f"/api/v1/jobs/{job_id}/retry", headers={"If-Match": '"1"'})
+    assert stale.status_code == 409

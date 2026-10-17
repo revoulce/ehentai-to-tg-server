@@ -29,7 +29,7 @@ def media_target(value: str) -> tuple[str, int, str]:
                 or host.endswith(".ehgt.org")
             )
             or (url.port is not None and url.port != 443 and url.port < 1024)
-            or "509" in url.path.lower()
+            or url.path.rsplit("/", 1)[-1].lower() in {"509.gif", "509.jpg", "509.png"}
             or "quota" in url.path.lower()
         ):
             raise ValueError

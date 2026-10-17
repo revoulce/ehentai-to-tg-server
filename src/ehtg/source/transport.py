@@ -1,5 +1,6 @@
 import http.client
 import ipaddress
+import json
 import re
 import socket
 import ssl
@@ -12,10 +13,11 @@ from ehtg.source.session import SessionCookie, check_cookies
 from ehtg.storage.database import Database
 
 HOST = "e-hentai.org"
+API_HOST = "api.e-hentai.org"
 
 
 def public_addresses(host: str) -> tuple[str, ...]:
-    if host != HOST:
+    if host not in {HOST, API_HOST}:
         raise SourceError("SOURCE_NETWORK_POLICY")
     try:
         results = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
@@ -36,19 +38,19 @@ def public_addresses(host: str) -> tuple[str, ...]:
 
 class PinnedHTTPSConnection(http.client.HTTPSConnection):
     def __init__(self, host: str, *, timeout: float = 20) -> None:
-        if host != HOST:
+        if host not in {HOST, API_HOST}:
             raise SourceError("SOURCE_NETWORK_POLICY")
         self.tls_context = ssl.create_default_context()
         super().__init__(host, 443, timeout=timeout, context=self.tls_context)
 
     def connect(self) -> None:
-        addresses = public_addresses(HOST)
+        addresses = public_addresses(self.host)
         raw = socket.create_connection((addresses[0], 443), self.timeout)
         try:
             if ipaddress.ip_address(raw.getpeername()[0]) != ipaddress.ip_address(addresses[0]):
                 raise SourceError("SOURCE_NETWORK_POLICY")
             # Pin the connection to the checked IP while validating TLS for the original host.
-            self.sock = self.tls_context.wrap_socket(raw, server_hostname=HOST)
+            self.sock = self.tls_context.wrap_socket(raw, server_hostname=self.host)
         except BaseException:
             raw.close()
             raise
@@ -175,6 +177,44 @@ class SourceTransport:
         if "this page requires you to log on" in lower or not text.strip():
             raise SourceError("SOURCE_AUTH_REQUIRED")
         return text
+
+    def gallery_token(self, gid: int, token: str, page: int) -> str:
+        self.gate.wait()
+        connection = PinnedHTTPSConnection(API_HOST, timeout=self.timeout)
+        try:
+            payload = json.dumps({"method": "gtoken", "pagelist": [[gid, token, page]]}).encode()
+            connection.request(
+                "POST",
+                "/api.php",
+                body=payload,
+                headers={"Content-Type": "application/json", "Accept-Encoding": "identity"},
+            )
+            response = connection.getresponse()
+            if response.status == 429:
+                raise SourceError("SOURCE_TEMPORARILY_BLOCKED")
+            if 300 <= response.status < 400:
+                raise SourceError("SOURCE_NETWORK_POLICY")
+            if response.status != 200:
+                raise SourceError("SOURCE_NETWORK_UNAVAILABLE")
+            if (
+                not response.getheader("Content-Type", "").lower().startswith("application/json")
+                or response.getheader("Content-Encoding", "identity") != "identity"
+            ):
+                raise SourceError("EXTRACTOR_INCOMPATIBLE")
+            raw = response.read(16385)
+            if len(raw) > 16384:
+                raise SourceError("RESOURCE_LIMIT")
+            body = json.loads(raw)
+            item = body["tokenlist"][0]
+            if int(item["gid"]) != gid or re.fullmatch(r"[0-9a-f]{10}", item["token"]) is None:
+                raise ValueError
+            return str(item["token"])
+        except (OSError, http.client.HTTPException):
+            raise SourceError("SOURCE_NETWORK_UNAVAILABLE") from None
+        except (KeyError, TypeError, ValueError, IndexError):
+            raise SourceError("GALLERY_UNAVAILABLE") from None
+        finally:
+            connection.close()
 
 
 def verify_authenticated_home(page: str) -> None:

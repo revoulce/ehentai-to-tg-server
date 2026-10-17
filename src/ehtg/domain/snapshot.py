@@ -25,6 +25,7 @@ class GallerySnapshot:
     cover_url: str = ""
     parent_url: str = ""
     raw_metadata_json: str = "{}"
+    canonical_url: str = ""
 
     def __post_init__(self) -> None:
         if (

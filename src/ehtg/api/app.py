@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import FileResponse, JSONResponse
 
 from ehtg import __version__
 from ehtg.analysis import AnalysisQueue
@@ -34,11 +34,14 @@ from ehtg.api.schemas import (
     PublishBatch,
     PublishDraft,
     RedeemCode,
+    ReviewJob,
 )
+from ehtg.artifacts import ArtifactStore
 from ehtg.auth import DeviceAuth
 from ehtg.domain.errors import AppError
 from ehtg.domain.publication import PublicationOptions
 from ehtg.domain.selection import PageSelection
+from ehtg.publisher import JobControl
 from ehtg.service import GalleryService
 from ehtg.settings import Settings
 from ehtg.source.session import SessionStore
@@ -124,6 +127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.service = service
     app.state.auth = auth
     app.state.analysis = analysis
+    controls = JobControl(service)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(config.allowed_hosts))
     app.add_middleware(
         CORSMiddleware,
@@ -189,10 +193,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "device_pairing": True,
                 "source_analysis": config.source_enabled,
                 "analysis_worker": True,
-                "telegram_publishing": False,
+                "telegram_publishing": config.bot_token is not None,
+                "publication_worker": True,
                 "batch": True,
                 "caption_preview": True,
-                "image_url_resolution": False,
+                "image_url_resolution": True,
             },
             "limits": {
                 "max_pages": config.max_pages,
@@ -209,6 +214,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def status() -> dict[str, Any]:
         with database.read() as connection:
             control = connection.execute("SELECT paused,reason_code FROM source_control").fetchone()
+            queue_paused = bool(
+                connection.execute("SELECT paused FROM queue_control").fetchone()[0]
+            )
         return {
             "database": "ready",
             "source": {
@@ -217,8 +225,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "reason_code": control["reason_code"],
                 "session": SessionStore(config.source_session_path).info(),
             },
-            "worker": "analysis_only",
-            "telegram": "not_implemented",
+            "worker": "analysis_and_publication",
+            "telegram": "configured" if config.bot_token else "not_configured",
+            "queue_paused": queue_paused,
         }
 
     @api.get("/devices", response_model=DeviceList)
@@ -291,8 +300,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.list_jobs(after=after, limit=limit)
 
     @api.get("/jobs/{job_id}", response_model=JobResponse)
-    def get_job(job_id: UUID) -> dict[str, Any]:
-        return service.get_job(str(job_id))
+    def get_job(job_id: UUID, response: Response) -> dict[str, Any]:
+        result = service.get_job(str(job_id))
+        response.headers["ETag"] = f'"{result["revision"]}"'
+        return result
+
+    @api.post("/jobs/{job_id}/cancel", response_model=JobResponse)
+    def cancel_job(job_id: UUID, expected: Annotated[int, Depends(revision)]) -> dict[str, Any]:
+        return controls.action(str(job_id), expected, "cancel")
+
+    @api.post("/jobs/{job_id}/retry", response_model=JobResponse)
+    def retry_job(job_id: UUID, expected: Annotated[int, Depends(revision)]) -> dict[str, Any]:
+        return controls.action(str(job_id), expected, "retry")
+
+    @api.post("/jobs/{job_id}/review", response_model=JobResponse)
+    def review_job(
+        job_id: UUID, body: ReviewJob, expected: Annotated[int, Depends(revision)]
+    ) -> dict[str, Any]:
+        return controls.review(
+            str(job_id), expected, body.decision, evidence=body.evidence, page=body.page
+        )
+
+    @api.post("/queue/pause")
+    def pause_queue() -> dict[str, bool]:
+        return controls.pause(True)
+
+    @api.post("/queue/resume")
+    def resume_queue() -> dict[str, bool]:
+        return controls.pause(False)
+
+    @api.get("/jobs/{job_id}/pages/{page_index}/preview")
+    def preview_page(job_id: UUID, page_index: int) -> FileResponse:
+        job = service.get_job(str(job_id))
+        if page_index not in [page["source_page_index"] for page in job["pages"]]:
+            raise AppError("NOT_FOUND", "Страница не найдена.", 404)
+        path = ArtifactStore(config, database).path(str(job_id), page_index, "photo")
+        if not path.is_file():
+            raise AppError("NOT_FOUND", "Предпросмотр ещё не подготовлен.", 404)
+        return FileResponse(
+            path,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
 
     @api.post("/jobs/{job_id}/repost", status_code=202, response_model=DraftResponse)
     def repost(job_id: UUID) -> dict[str, Any]:

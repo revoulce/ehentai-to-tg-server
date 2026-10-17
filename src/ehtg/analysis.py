@@ -252,6 +252,13 @@ class AnalysisQueue:
         with self.db.transaction() as connection:
             connection.execute("UPDATE source_control SET paused=0,reason_code=NULL")
             connection.execute(
+                "UPDATE jobs SET state='queued',attempts=0,error_code=NULL,error_message=NULL,"
+                "revision=revision+1 WHERE owner_id=? AND state='paused' "
+                "AND error_code IN ('SOURCE_AUTH_REQUIRED','SOURCE_QUOTA_EXCEEDED',"
+                "'SOURCE_TEMPORARILY_BLOCKED')",
+                (self.owner_id,),
+            )
+            connection.execute(
                 "UPDATE draft_analysis SET state='pending',attempts=0,error_code=NULL,"
                 "error_message=NULL,retryable=0 WHERE state='paused' AND draft_id IN "
                 "(SELECT id FROM drafts WHERE owner_id=?)",

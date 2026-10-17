@@ -34,6 +34,7 @@ class SnapshotResponse(BaseModel):
     cover_url: str = ""
     parent_url: str = ""
     raw_metadata_json: str = "{}"
+    canonical_url: str = ""
 
 
 class AnalysisResponse(BaseModel):

@@ -3,13 +3,18 @@ import sqlite3
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from importlib.resources import files
 from pathlib import Path
+from uuid import uuid4
 
 
 class Database:
     def __init__(self, path: Path) -> None:
         self.path = path
+        self._active: ContextVar[sqlite3.Connection | None] = ContextVar(
+            "database_transaction", default=None
+        )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5, isolation_level=None)
@@ -21,6 +26,10 @@ class Database:
 
     @contextmanager
     def read(self) -> Iterator[sqlite3.Connection]:
+        active = self._active.get()
+        if active is not None:
+            yield active
+            return
         connection = self._connect()
         try:
             yield connection
@@ -29,14 +38,29 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
+        active = self._active.get()
+        if active is not None:
+            name = "nested_" + uuid4().hex
+            active.execute("SAVEPOINT " + name)
+            try:
+                yield active
+                active.execute("RELEASE SAVEPOINT " + name)
+            except BaseException:
+                active.execute("ROLLBACK TO SAVEPOINT " + name)
+                active.execute("RELEASE SAVEPOINT " + name)
+                raise
+            return
         with self.read() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            token = self._active.set(connection)
             try:
                 yield connection
                 connection.commit()
             except BaseException:
                 connection.rollback()
                 raise
+            finally:
+                self._active.reset(token)
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

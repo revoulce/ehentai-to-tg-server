@@ -11,7 +11,7 @@ from ehtg.domain.errors import AppError
 from ehtg.domain.publication import PublicationOptions, publication_plan
 from ehtg.domain.selection import PageSelection
 from ehtg.domain.snapshot import GallerySnapshot, canonical_json
-from ehtg.domain.source import parse_gallery_url
+from ehtg.domain.source import parse_source_url
 from ehtg.storage.database import Database
 from ehtg.storage.snapshots import save_analysis
 
@@ -62,7 +62,7 @@ class GalleryService:
         source_url: str,
         selection: PageSelection,
     ) -> str:
-        source = parse_gallery_url(source_url)
+        source = parse_source_url(source_url)
         draft_id = str(uuid4())
         count = connection.execute(
             "SELECT COUNT(*) FROM drafts WHERE owner_id=? AND state IN ('analyzing','ready')",
@@ -233,7 +233,9 @@ class GalleryService:
             raise AppError("DRAFT_NOT_READY", "Сначала дождитесь готового предпросмотра.", 409)
         existing = connection.execute(
             "SELECT id, state, published_pages FROM jobs WHERE owner_id=? AND gid=? "
-            "AND channel_id=? AND (state NOT IN ('failed','cancelled') OR published_pages>0)",
+            "AND channel_id=? AND (state NOT IN ('failed','cancelled') OR published_pages>0) "
+            "ORDER BY CASE WHEN state IN ('completed','failed','cancelled') THEN 1 ELSE 0 END, "
+            "sequence DESC LIMIT 1",
             (self.owner_id, draft["gid"], self.channel_id),
         ).fetchone()
         if existing is not None and (
@@ -347,7 +349,7 @@ class GalleryService:
     def create_batch(self, urls: list[str]) -> dict[str, Any]:
         if not 1 <= len(urls) <= 50:
             raise AppError("RESOURCE_LIMIT", "Выберите от 1 до 50 галерей.")
-        canonical = [parse_gallery_url(url).canonical for url in urls]
+        canonical = [parse_source_url(url).canonical for url in urls]
         if len(set(canonical)) != len(canonical):
             raise AppError("INVALID_BATCH", "В списке повторяются галереи.")
         batch_id = str(uuid4())

@@ -84,6 +84,22 @@ def prepare(
                         Image.Resampling.LANCZOS,
                     )
                     transforms.append("resize")
+                long, short = max(background.size), min(background.size)
+                if long > short * 20:
+                    dimensions = (
+                        (max(background.width, (long + 19) // 20), background.height)
+                        if background.height == long
+                        else (background.width, max(background.height, (long + 19) // 20))
+                    )
+                    canvas = Image.new("RGB", dimensions, "white")
+                    canvas.paste(
+                        background,
+                        (
+                            (dimensions[0] - background.width) // 2,
+                            (dimensions[1] - background.height) // 2,
+                        ),
+                    )
+                    background = canvas
                 # Preserve at least a 1280px long edge when the input was that large.
                 for _ in range(5):
                     for quality in (92, 85, 75):

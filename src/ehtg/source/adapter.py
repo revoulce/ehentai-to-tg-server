@@ -3,7 +3,7 @@ from dataclasses import asdict
 from typing import Any
 
 from ehtg.domain.snapshot import GallerySnapshot
-from ehtg.domain.source import parse_gallery_url
+from ehtg.domain.source import parse_source_url
 from ehtg.settings import Settings
 from ehtg.source.errors import SourceError
 from ehtg.source.process import IsolatedProcess
@@ -39,7 +39,7 @@ class GalleryDLSource:
         self.process.run({"operation": "verify", **self._payload(cookies)}, lambda: None)
 
     def inspect(self, source_url: str, heartbeat: Callable[[], None]) -> GallerySnapshot:
-        source = parse_gallery_url(source_url)
+        source = parse_source_url(source_url)
         if not self.settings.source_enabled:
             raise SourceError("SOURCE_AUTH_REQUIRED")
         cookies = self.sessions.load()
