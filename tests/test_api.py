@@ -20,6 +20,7 @@ def settings(tmp_path: Path) -> Settings:
         owner_id="123456",
         channel_id="-1001234567890",
         database_path=tmp_path / "http.sqlite3",
+        source_session_path=tmp_path / "source-session.json",
         allowed_origins=(ORIGIN,),
         allowed_hosts=("testserver",),
         max_body_bytes=1024,
@@ -180,3 +181,25 @@ def test_invalid_settings_fail_closed() -> None:
         )
     with pytest.raises(ValidationError):
         Settings(_env_file=None, owner_id="123456", channel_id="-100123", allowed_hosts=("*",))
+
+
+def test_analysis_cancel_retry_and_errors_are_visible(client: TestClient) -> None:
+    draft = client.post("/api/v1/drafts", json={"source_url": SOURCE}).json()
+    assert draft["analysis"]["state"] == "pending"
+    route = f"/api/v1/drafts/{draft['id']}/analysis"
+    cancelled = client.post(f"{route}/cancel", headers={"If-Match": '"1"'})
+    assert cancelled.status_code == 200
+    assert cancelled.json()["analysis"]["error_code"] == "ANALYSIS_CANCELLED"
+    stale = client.post(f"{route}/retry", headers={"If-Match": '"1"'})
+    assert stale.status_code == 409
+    retried = client.post(f"{route}/retry", headers={"If-Match": cancelled.headers["etag"]})
+    assert retried.status_code == 202
+    assert retried.json()["state"] == "analyzing"
+    assert retried.json()["analysis"]["state"] == "pending"
+
+
+def test_source_status_contains_no_session_values(client: TestClient) -> None:
+    status = client.get("/api/v1/status").json()
+    assert status["source"]["enabled"] is False
+    assert status["source"]["session"]["state"] == "missing_or_expired"
+    assert status["worker"] == "analysis_only"

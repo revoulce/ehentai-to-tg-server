@@ -236,9 +236,10 @@ class AnalysisQueue:
             if count >= self.max_queue:
                 raise AppError("RESOURCE_LIMIT", "Достигнут предел черновиков.", 409)
             connection.execute(
-                "UPDATE draft_analysis SET state='pending',attempts=0,generation=generation+1,"
+                "INSERT INTO draft_analysis(draft_id) VALUES (?) ON CONFLICT(draft_id) DO UPDATE "
+                "SET state='pending',attempts=0,generation=generation+1,"
                 "lease_owner=NULL,lease_until=NULL,retry_at=NULL,error_code=NULL,"
-                "error_message=NULL,retryable=0 WHERE draft_id=?",
+                "error_message=NULL,retryable=0",
                 (draft_id,),
             )
             connection.execute(

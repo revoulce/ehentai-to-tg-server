@@ -33,3 +33,22 @@ def test_cli_migrate_pair_backup_and_export(
     contract = json.loads(openapi_path.read_text(encoding="utf-8"))
     assert contract["paths"]["/api/v1/drafts/{draft_id}/publish"]["post"]["security"]
     assert "DraftResponse" in contract["components"]["schemas"]
+
+
+def test_cli_source_status_and_disabled_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EHTG_OWNER_ID", "123456")
+    monkeypatch.setenv("EHTG_CHANNEL_ID", "-1001234567890")
+    monkeypatch.setenv("EHTG_SOURCE_ENABLED", "false")
+    monkeypatch.setattr("sys.argv", ["ehtg", "source", "status"])
+    main()
+    assert json.loads(capsys.readouterr().out)["session"]["state"] == "missing_or_expired"
+    monkeypatch.setattr("sys.argv", ["ehtg", "worker", "--once"])
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert "SOURCE_DISABLED" in capsys.readouterr().err

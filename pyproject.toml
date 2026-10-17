@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ehentai-to-tg"
-version = "0.1.0"
+version = "0.2.0"
 description = "Persistent application core for a private gallery publishing service"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -23,6 +23,14 @@ dev = [
 
 [project.scripts]
 ehtg = "ehtg.cli:main"
+
+[project.optional-dependencies]
+source = [
+    "gallery-dl @ https://codeberg.org/mikf/gallery-dl/archive/61971e01d394d35c81a86d4d0d03717c78ae53d5.tar.gz#sha256=f48afb4c1ce7235e5bc83c585093da5b2557edf3776b0179b72260d8c961152d",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ehtg"]
@@ -46,3 +54,4 @@ plugins = ["pydantic.mypy"]
 
 [tool.uv]
 required-version = ">=0.13,<0.14"
+build-constraint-dependencies = ["setuptools==75.8.0"]

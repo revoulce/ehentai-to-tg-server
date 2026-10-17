@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     max_queue: int = Field(default=100, ge=1, le=1000)
     max_body_bytes: int = Field(default=16384, ge=1024, le=1048576)
     pairing_attempts_per_minute: int = Field(default=10, ge=1, le=60)
+    source_enabled: bool = False
+    source_session_path: Path = Path("secrets/source-session.json")
+    source_request_interval: float = Field(default=3, ge=1, le=60)
+    source_request_timeout: float = Field(default=20, ge=1, le=60)
+    source_max_html_bytes: int = Field(default=2097152, ge=65536, le=8388608)
+    source_max_index_pages: int = Field(default=200, ge=1, le=2000)
+    source_memory_mb: int = Field(default=256, ge=128, le=512)
+    analysis_timeout: float = Field(default=900, ge=30, le=3600)
+    analysis_lease_seconds: float = Field(default=30, ge=5, le=300)
+    analysis_max_attempts: int = Field(default=3, ge=1, le=10)
+    analysis_retry_seconds: float = Field(default=5, ge=1, le=60)
 
     @field_validator("allowed_origins")
     @classmethod

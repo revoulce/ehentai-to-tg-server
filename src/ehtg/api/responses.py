@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ehtg.api.schemas import SelectionBody
 
@@ -27,6 +27,22 @@ class SnapshotResponse(BaseModel):
     category: str
     tags: list[tuple[str, str]]
     fingerprint: str
+    uploader: str = ""
+    language: str = ""
+    authors: list[str] = Field(default_factory=list)
+    groups: list[str] = Field(default_factory=list)
+    cover_url: str = ""
+    parent_url: str = ""
+    raw_metadata_json: str = "{}"
+
+
+class AnalysisResponse(BaseModel):
+    state: Literal["pending", "running", "retry_wait", "paused", "succeeded", "failed", "cancelled"]
+    attempts: int
+    retry_at: datetime | None
+    error_code: str | None
+    error_message: str | None
+    retryable: bool
 
 
 class DraftResponse(BaseModel):
@@ -41,6 +57,7 @@ class DraftResponse(BaseModel):
     page_selection: SelectionBody
     snapshot: SnapshotResponse | None
     selected_pages: list[int]
+    analysis: AnalysisResponse
 
 
 class PublicationReceipt(BaseModel):

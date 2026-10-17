@@ -1,5 +1,6 @@
 import hashlib
 import sqlite3
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from importlib.resources import files
@@ -38,8 +39,10 @@ class Database:
                 raise
 
     def initialize(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self.read() as connection:
+            if sys.platform != "win32":
+                self.path.chmod(0o600)
             connection.execute("PRAGMA journal_mode=WAL")
         with self.transaction() as connection:
             connection.execute(
@@ -80,6 +83,8 @@ class Database:
     def backup(self, destination: Path) -> None:
         if destination.resolve() == self.path.resolve() or destination.exists():
             raise ValueError("Backup destination must be a new file")
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self.read() as source, sqlite3.connect(destination) as target:
+            if sys.platform != "win32":
+                destination.chmod(0o600)
             source.backup(target)

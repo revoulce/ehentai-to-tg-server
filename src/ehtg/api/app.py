@@ -15,6 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse
 
 from ehtg import __version__
+from ehtg.analysis import AnalysisQueue
 from ehtg.api.middleware import RequestBoundary
 from ehtg.api.responses import (
     DeviceList,
@@ -31,6 +32,7 @@ from ehtg.domain.errors import AppError
 from ehtg.domain.selection import PageSelection
 from ehtg.service import GalleryService
 from ehtg.settings import Settings
+from ehtg.source.session import SessionStore
 from ehtg.storage.database import Database
 
 _bearer = HTTPBearer(auto_error=False)
@@ -86,6 +88,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         config.allowed_origins,
         attempts_per_minute=config.pairing_attempts_per_minute,
     )
+    analysis = AnalysisQueue(
+        database,
+        config.owner_id,
+        lease_seconds=config.analysis_lease_seconds,
+        max_attempts=config.analysis_max_attempts,
+        retry_seconds=config.analysis_retry_seconds,
+        max_pages=config.max_pages,
+        max_queue=config.max_queue,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -103,6 +114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.service = service
     app.state.auth = auth
+    app.state.analysis = analysis
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(config.allowed_hosts))
     app.add_middleware(
         CORSMiddleware,
@@ -166,7 +178,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "drafts": True,
                 "persistent_queue": True,
                 "device_pairing": True,
-                "source_analysis": False,
+                "source_analysis": config.source_enabled,
+                "analysis_worker": True,
                 "telegram_publishing": False,
                 "batch": False,
                 "image_url_resolution": False,
@@ -175,15 +188,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "max_pages": config.max_pages,
                 "max_queue": config.max_queue,
                 "max_body_bytes": config.max_body_bytes,
+                "max_source_html_bytes": config.source_max_html_bytes,
+                "max_source_index_pages": config.source_max_index_pages,
+                "analysis_max_attempts": config.analysis_max_attempts,
+                "analysis_timeout_seconds": config.analysis_timeout,
             },
         }
 
     @api.get("/status")
-    def status() -> dict[str, str]:
+    def status() -> dict[str, Any]:
+        with database.read() as connection:
+            control = connection.execute("SELECT paused,reason_code FROM source_control").fetchone()
         return {
             "database": "ready",
-            "source": "not_implemented",
-            "worker": "not_implemented",
+            "source": {
+                "enabled": config.source_enabled,
+                "paused": bool(control["paused"]),
+                "reason_code": control["reason_code"],
+                "session": SessionStore(config.source_session_path).info(),
+            },
+            "worker": "analysis_only",
             "telegram": "not_implemented",
         }
 
@@ -232,6 +256,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         key: Annotated[str, Header(alias="Idempotency-Key")],
     ) -> dict[str, Any]:
         return service.publish(str(draft_id), expected, key, request_id=request.state.request_id)
+
+    @api.post("/drafts/{draft_id}/analysis/cancel", response_model=DraftResponse)
+    def cancel_analysis(
+        draft_id: UUID, response: Response, expected: Annotated[int, Depends(revision)]
+    ) -> dict[str, Any]:
+        analysis.cancel(str(draft_id), expected)
+        return get_draft(draft_id, response)
+
+    @api.post("/drafts/{draft_id}/analysis/retry", status_code=202, response_model=DraftResponse)
+    def retry_analysis(
+        draft_id: UUID, response: Response, expected: Annotated[int, Depends(revision)]
+    ) -> dict[str, Any]:
+        analysis.retry(str(draft_id), expected)
+        return get_draft(draft_id, response)
 
     @api.get("/jobs", response_model=JobList)
     def jobs(
