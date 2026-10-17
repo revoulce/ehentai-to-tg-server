@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -58,6 +58,11 @@ class DraftResponse(BaseModel):
     snapshot: SnapshotResponse | None
     selected_pages: list[int]
     analysis: AnalysisResponse
+    options: dict[str, Any]
+    preview: dict[str, Any] | None
+    preview_error: dict[str, str] | None
+    duplicate: dict[str, Any] | None
+    repost_of: UUID | None
 
 
 class PublicationReceipt(BaseModel):
@@ -86,6 +91,15 @@ class JobResponse(BaseModel):
     published_parts: int
     created_at: datetime
     pages: list[PageResponse]
+    revision: int
+    plan: dict[str, Any]
+    review: dict[str, Any]
+    parts: list[dict[str, Any]]
+    attempts: int
+    retry_at: float | None
+    error_code: str | None
+    error_message: str | None
+    completed_at: float | None
 
 
 class JobSummary(BaseModel):

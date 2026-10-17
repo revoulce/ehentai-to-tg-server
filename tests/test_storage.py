@@ -28,7 +28,7 @@ def test_migrations_are_repeatable_and_durable(database: Database) -> None:
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 3
+        assert connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
 
 
 def test_snapshot_is_immutable_and_preserves_repeated_positions(service: GalleryService) -> None:

@@ -26,9 +26,18 @@ from ehtg.api.responses import (
     PairingResponse,
     PublicationReceipt,
 )
-from ehtg.api.schemas import CreateDraft, EditDraft, PublishDraft, RedeemCode
+from ehtg.api.schemas import (
+    CreateBatch,
+    CreateDraft,
+    EditBatch,
+    EditDraft,
+    PublishBatch,
+    PublishDraft,
+    RedeemCode,
+)
 from ehtg.auth import DeviceAuth
 from ehtg.domain.errors import AppError
+from ehtg.domain.publication import PublicationOptions
 from ehtg.domain.selection import PageSelection
 from ehtg.service import GalleryService
 from ehtg.settings import Settings
@@ -181,7 +190,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "source_analysis": config.source_enabled,
                 "analysis_worker": True,
                 "telegram_publishing": False,
-                "batch": False,
+                "batch": True,
+                "caption_preview": True,
                 "image_url_resolution": False,
             },
             "limits": {
@@ -242,7 +252,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expected: Annotated[int, Depends(revision)],
     ) -> dict[str, Any]:
         result = service.edit_selection(
-            str(draft_id), expected, PageSelection(**body.page_selection.model_dump())
+            str(draft_id),
+            expected,
+            PageSelection(**body.page_selection.model_dump()),
+            PublicationOptions(**body.options.model_dump()) if body.options is not None else None,
         )
         response.headers["ETag"] = f'"{result["revision"]}"'
         return result
@@ -280,6 +293,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @api.get("/jobs/{job_id}", response_model=JobResponse)
     def get_job(job_id: UUID) -> dict[str, Any]:
         return service.get_job(str(job_id))
+
+    @api.post("/jobs/{job_id}/repost", status_code=202, response_model=DraftResponse)
+    def repost(job_id: UUID) -> dict[str, Any]:
+        return service.repost(str(job_id))
+
+    @api.post("/batches", status_code=202)
+    def create_batch(body: CreateBatch, response: Response) -> dict[str, Any]:
+        result = service.create_batch(body.source_urls)
+        response.headers["ETag"] = f'"{result["revision"]}"'
+        return result
+
+    @api.get("/batches/{batch_id}")
+    def get_batch(batch_id: UUID, response: Response) -> dict[str, Any]:
+        result = service.get_batch(str(batch_id))
+        response.headers["ETag"] = f'"{result["revision"]}"'
+        return result
+
+    @api.patch("/batches/{batch_id}")
+    def edit_batch(
+        batch_id: UUID,
+        body: EditBatch,
+        response: Response,
+        expected: Annotated[int, Depends(revision)],
+    ) -> dict[str, Any]:
+        result = service.edit_batch(str(batch_id), expected, body.draft_ids)
+        response.headers["ETag"] = f'"{result["revision"]}"'
+        return result
+
+    @api.post("/batches/{batch_id}/publish", status_code=202)
+    def publish_batch(
+        batch_id: UUID,
+        body: PublishBatch,
+        expected: Annotated[int, Depends(revision)],
+        key: Annotated[str, Header(alias="Idempotency-Key")],
+    ) -> dict[str, Any]:
+        return service.publish_batch(
+            str(batch_id), expected, [(item.id, item.revision) for item in body.items], key
+        )
 
     app.include_router(pairing)
     app.include_router(api)

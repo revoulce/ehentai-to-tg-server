@@ -17,6 +17,32 @@ class CreateDraft(StrictBody):
 
 class EditDraft(StrictBody):
     page_selection: SelectionBody
+    options: "OptionsBody | None" = None
+
+
+class OptionsBody(StrictBody):
+    title: str | None = Field(default=None, max_length=2048)
+    caption: str | None = Field(default=None, max_length=4096)
+    removed_tags: list[str] = Field(default_factory=list, max_length=2000)
+    disable_notification: bool = True
+    has_spoiler: bool = False
+
+
+class CreateBatch(StrictBody):
+    source_urls: list[str] = Field(min_length=1, max_length=50)
+
+
+class EditBatch(StrictBody):
+    draft_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+class DraftRevision(StrictBody):
+    id: str
+    revision: int = Field(ge=1)
+
+
+class PublishBatch(StrictBody):
+    items: list[DraftRevision] = Field(min_length=1, max_length=50)
 
 
 class PublishDraft(StrictBody):
