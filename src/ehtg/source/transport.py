@@ -105,7 +105,9 @@ class SourceTransport:
         check_cookies(self.cookies, time.time())
         if (
             re.fullmatch(
-                r"/(?:home\.php|g/[1-9][0-9]{0,17}/[a-f0-9]{10}/(?:\?p=[0-9]{1,4})?)", path
+                r"/(?:home\.php|g/[1-9][0-9]{0,17}/[a-f0-9]{10}/(?:\?p=[0-9]{1,4})?"
+                r"|s/[a-f0-9]{10}/[1-9][0-9]{0,17}-[1-9][0-9]{0,8})",
+                path,
             )
             is None
         ):

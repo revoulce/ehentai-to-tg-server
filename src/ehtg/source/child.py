@@ -3,8 +3,10 @@ import os
 import signal
 import sys
 from dataclasses import asdict
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ehtg.domain.errors import AppError
 from ehtg.source.errors import SourceError
@@ -12,6 +14,17 @@ from ehtg.source.parser import inspect_gallery, probe
 from ehtg.source.session import SessionCookie
 from ehtg.source.transport import SourceGate, SourceTransport, verify_authenticated_home
 from ehtg.storage.database import Database
+
+
+class ImagePage(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.url = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "img" and values.get("id") == "img":
+            self.url = values.get("src") or ""
 
 
 def _limits(request: dict[str, Any]) -> None:
@@ -40,7 +53,16 @@ def main() -> None:
         operation = request["operation"]
         if operation == "probe":
             result: dict[str, Any] = {"probe": probe()}
-        elif operation in {"inspect", "verify"}:
+        elif operation == "prepare":
+            from ehtg.media import prepare
+
+            result = prepare(
+                Path(request["source_path"]),
+                Path(request["photo_path"]),
+                max_pixels=request["max_pixels"],
+                first_frame=request["first_frame"],
+            )
+        elif operation in {"inspect", "verify", "download"}:
             probe()
             cookies = tuple(SessionCookie(**item) for item in request["cookies"])
             gate = SourceGate(Database(Path(request["database_path"])), request["interval"])
@@ -52,20 +74,41 @@ def main() -> None:
                 allow_paused=operation == "verify",
             )
             verify_authenticated_home(transport.get("/home.php"))
-            result = (
-                {}
-                if operation == "verify"
-                else {
-                    "snapshot": asdict(
-                        inspect_gallery(
-                            request["source_url"],
-                            transport.get,
-                            max_pages=request["max_pages"],
-                            max_index_pages=request["max_index_pages"],
+            if operation == "download":
+                from ehtg.source.media_transport import download
+
+                for attempt in range(2):
+                    page = ImagePage()
+                    page.feed(transport.get(urlsplit(request["page_url"]).path))
+                    try:
+                        download(
+                            page.url,
+                            Path(request["destination"]),
+                            gate,
+                            max_bytes=request["max_media_bytes"],
+                            timeout=request["request_timeout"],
+                            min_free_bytes=request["min_free_bytes"],
                         )
-                    )
-                }
-            )
+                        break
+                    except AppError as error:
+                        if error.code != "MEDIA_URL_EXPIRED" or attempt == 1:
+                            raise
+                result = {}
+            else:
+                result = (
+                    {}
+                    if operation == "verify"
+                    else {
+                        "snapshot": asdict(
+                            inspect_gallery(
+                                request["source_url"],
+                                transport.get,
+                                max_pages=request["max_pages"],
+                                max_index_pages=request["max_index_pages"],
+                            )
+                        )
+                    }
+                )
         else:
             raise SourceError("EXTRACTOR_INCOMPATIBLE")
         response = {"protocol": 1, "ok": True, **result}

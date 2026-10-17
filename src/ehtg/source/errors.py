@@ -1,6 +1,11 @@
 from ehtg.domain.errors import AppError
 
 _ERRORS = {
+    "MEDIA_INVALID": ("Файл изображения повреждён или имеет неподдерживаемый формат.", False),
+    "MEDIA_UNREADABLE": ("Невозможно подготовить читаемое фото в пределах Telegram.", False),
+    "ANIMATION_REVIEW": ("Анимация требует выбора первого кадра или исключения страницы.", False),
+    "MEDIA_URL_EXPIRED": ("Адрес изображения истёк. Требуется новое разрешение страницы.", True),
+    "DISK_FULL": ("Недостаточно свободного места для загрузки.", False),
     "SOURCE_AUTH_REQUIRED": ("Требуется действующая авторизованная сессия E-Hentai.", False),
     "SOURCE_QUOTA_EXCEEDED": ("Квота источника исчерпана.", False),
     "SOURCE_TEMPORARILY_BLOCKED": ("Источник временно ограничил доступ.", False),

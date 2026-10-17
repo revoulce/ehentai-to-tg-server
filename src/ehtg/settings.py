@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, StringConstraints, field_validator
+from pydantic import Field, SecretStr, StringConstraints, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 OwnerID = Annotated[str, StringConstraints(pattern=r"^[1-9][0-9]{0,18}$")]
@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     max_body_bytes: int = Field(default=16384, ge=1024, le=1048576)
     pairing_attempts_per_minute: int = Field(default=10, ge=1, le=60)
     source_enabled: bool = False
+    bot_token: SecretStr | None = None
+    files_path: Path = Path("data/files")
+    media_max_bytes: int = Field(default=30_000_000, ge=1024, le=100_000_000)
+    media_max_pixels: int = Field(default=40_000_000, ge=1000000, le=100_000_000)
+    job_max_bytes: int = Field(default=1_000_000_000, ge=1000000, le=10_000_000_000)
+    min_free_bytes: int = Field(default=500_000_000, ge=0)
+    media_timeout: float = Field(default=120, ge=10, le=600)
+    job_max_attempts: int = Field(default=5, ge=1, le=20)
+    file_retention_seconds: int = Field(default=86400, ge=0)
     source_session_path: Path = Path("secrets/source-session.json")
     source_request_interval: float = Field(default=3, ge=1, le=60)
     source_request_timeout: float = Field(default=20, ge=1, le=60)
