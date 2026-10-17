@@ -1,0 +1,55 @@
+name: ehtg
+
+x-app: &app
+  image: ehtg-backend:0.3.0
+  build: .
+  env_file: .env
+  restart: unless-stopped
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 64
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  volumes:
+    - data:/app/data
+    - ./secrets:/app/secrets:ro
+  logging:
+    driver: json-file
+    options: {max-size: "5m", max-file: "2"}
+
+services:
+  api:
+    <<: *app
+    ports: ["127.0.0.1:8080:8000"]
+    mem_limit: 192m
+    cpus: 0.25
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=5).close()"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+  worker:
+    <<: *app
+    command: [ehtg, worker]
+    mem_limit: 512m
+    cpus: 0.5
+    stop_grace_period: 15s
+  bot:
+    <<: *app
+    command: [ehtg, bot]
+    mem_limit: 128m
+    cpus: 0.1
+  admin:
+    <<: *app
+    profiles: [admin]
+    entrypoint: [ehtg]
+    command: [source, status]
+    restart: "no"
+    volumes:
+      - data:/app/data
+      - ./secrets:/app/secrets
+      - ./imports:/app/imports:ro
+
+volumes:
+  data:

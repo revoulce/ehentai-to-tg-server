@@ -26,3 +26,7 @@ jobs:
       - run: uv run --locked --extra source pytest
       - run: uv build --no-sources
       - run: uv run --locked --extra source python scripts/verify_dist.py
+      - if: runner.os == 'Linux'
+        run: docker compose config --no-env-resolution --quiet
+      - if: runner.os == 'Linux'
+        run: docker build -t ehtg-backend:test .

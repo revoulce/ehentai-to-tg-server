@@ -40,6 +40,17 @@ def main() -> None:
     with tarfile.open(source) as archive:
         tar_names = archive.getnames()
         require(
+            not any(
+                any(
+                    "/" + part + "/" in name
+                    for part in (".tools", ".venv", "secrets", "imports", "data")
+                )
+                or name.endswith("/.env")
+                for name in tar_names
+            ),
+            "The source archive contains local caches, runtime data or secrets",
+        )
+        require(
             any(name.endswith("/THIRD_PARTY_NOTICES.md") for name in tar_names),
             "The source archive is missing third-party notices",
         )
